@@ -1,8 +1,10 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
-const io = require('socket.io')(http);
-
+// 允許傳送最大 50MB 的檔案
+const io = require('socket.io')(http, {
+  maxHttpBufferSize: 5e7
+});
 app.use(express.static('public'));
 
 let userCount = 0;
