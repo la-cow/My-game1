@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>終極射擊遊戲</title>
+    <style>
+        body { font-family: '微軟正黑體', Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f0f0f0; }
+        #game-screen, #chat-screen { display: none; } 
+        #login-screen { background: white; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #chat-screen { background: white; max-width: 500px; margin: 0 auto; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #messages { list-style-type: none; padding: 0; text-align: left; height: 350px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; background: #fafafa; margin-bottom: 15px; }
+        #messages li { padding: 10px; border-bottom: 1px solid #eee; }
+        img.chat-img { max-width: 150px; display: block; margin-top: 5px; border-radius: 5px; }
+        input[type="text"] { padding: 10px; width: 70%; border: 1px solid #ccc; border-radius: 4px; }
+        
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background-color: #0056b3; }
+        
+        /* 紅色的離開按鈕 */
+        .btn-danger { background-color: #dc3545; }
+        .btn-danger:hover { background-color: #c82333; }
+
+        #game-screen { background: white; max-width: 600px; margin: 0 auto; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #game-area { width: 100%; height: 300px; background-color: #e2f0d9; position: relative; overflow: hidden; border-radius: 8px; cursor: crosshair; margin-top: 15px; border: 2px solid #555; }
+        #target { font-size: 40px; position: absolute; top: 50%; left: 50%; display: none; user-select: none; transition: transform 0.1s; }
+        #target:active { transform: scale(0.8); }
+        
+        /* 控制面板排版 */
+        .control-panel { margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+        <h2>🎮 歡迎來到終極射擊遊戲</h2>
+        <p>請輸入您的玩家名稱開始遊戲：</p>
+        <input type="text" id="username" placeholder="請輸入名稱...">
+        <button onclick="checkLogin()">進入遊戲</button>
+    </div>
+
+    <div id="game-screen">
+        <h2>🎯 終極射擊練習</h2>
+        <p style="font-size: 18px; font-weight: bold;">
+            分數: <span id="score" style="color: red;">0</span> | 
+            剩餘時間: <span id="time" style="color: blue;">30</span> 秒
+        </p>
+        <div id="game-area">
+            <div id="target" onmousedown="hitTarget()">🎯</div>
+        </div>
+        
+        <div class="control-panel">
+            <button id="start-btn" onclick="startGame()">開始遊戲</button>
+            <button class="btn-danger" onclick="leaveGame()" style="margin-left: 10px;">離開遊戲</button>
+        </div>
+    </div>
+
+    <div id="chat-screen">
+        <h2>🤫 頻道</h2>
+        <ul id="messages"></ul>
+        <div>
+            <input id="chat-input" autocomplete="off" placeholder="輸入文字訊息..." />
+            <button onclick="sendMessage()">發送</button>
+        </div>
+        <div style="margin-top: 15px; text-align: left;">
+            <label>傳送圖片：</label>
+            <input type="file" id="file-input" accept="image/*" onchange="sendFile()">
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        // 登入邏輯
+        function checkLogin() {
+            const name = document.getElementById('username').value;
+            document.getElementById('login-screen').style.display = 'none';
+
+            if (name === 'j3') {
+                document.getElementById('chat-screen').style.display = 'block';
+            } else {
+                document.getElementById('game-screen').style.display = 'inline-block';
+            }
+        }
+
+        // 離開遊戲邏輯
+        function leaveGame() {
+            // 如果遊戲進行中，強制停止計時
+            if (isPlaying) {
+                isPlaying = false;
+                clearInterval(gameInterval);
+                clearInterval(targetInterval);
+            }
+            
+            // 畫面按鈕與分數歸零
+            document.getElementById('target').style.display = 'none';
+            document.getElementById('start-btn').style.display = 'inline-block';
+            document.getElementById('start-btn').innerText = '開始遊戲';
+            document.getElementById('score').innerText = '0';
+            document.getElementById('time').innerText = '30';
+
+            // 切換畫面
+            document.getElementById('game-screen').style.display = 'none';
+            document.getElementById('login-screen').style.display = 'inline-block';
+            document.getElementById('username').value = ''; // 清空名稱
+        }
+
+        // 打靶遊戲邏輯
+        let score = 0;
+        let timeLeft = 30;
+        let gameInterval;
+        let targetInterval;
+        let isPlaying = false;
+
+        function startGame() {
+            if (isPlaying) return; 
+            isPlaying = true;
+            score = 0;
+            timeLeft = 30;
+            
+            document.getElementById('score').innerText = score;
+            document.getElementById('time').innerText = timeLeft;
+            document.getElementById('target').style.display = 'block';
+            
+            // 遊戲開始時，隱藏「開始遊戲」按鈕
+            document.getElementById('start-btn').style.display = 'none';
+
+            moveTarget(); 
+            
+            gameInterval = setInterval(() => {
+                timeLeft--;
+                document.getElementById('time').innerText = timeLeft;
+                if (timeLeft <= 0) {
+                    endGame(); 
+                }
+            }, 1000);
+
+            targetInterval = setInterval(moveTarget, 1200);
+        }
+
+        function moveTarget() {
+            const gameArea = document.getElementById('game-area');
+            const target = document.getElementById('target');
+            const maxX = gameArea.clientWidth - 40;
+            const maxY = gameArea.clientHeight - 40;
+            const randomX = Math.floor(Math.random() * maxX);
+            const randomY = Math.floor(Math.random() * maxY);
+            
+            target.style.left = randomX + 'px';
+            target.style.top = randomY + 'px';
+        }
+
+        function hitTarget() {
+            if (!isPlaying) return;
+            score++; 
+            document.getElementById('score').innerText = score;
+            moveTarget(); 
+            clearInterval(targetInterval);
+            targetInterval = setInterval(moveTarget, 1200);
+        }
+
+        function endGame() {
+            isPlaying = false;
+            clearInterval(gameInterval);    
+            clearInterval(targetInterval);  
+            
+            document.getElementById('target').style.display = 'none';
+            
+            // 遊戲結束，顯示「再玩一次」按鈕
+            document.getElementById('start-btn').style.display = 'inline-block';
+            document.getElementById('start-btn').innerText = '再玩一次';
+            
+            setTimeout(() => { alert('遊戲結束！你的總分是：' + score + ' 分'); }, 50);
+        }
+
+        // 聊天室邏輯
+        function sendMessage() {
+            const input = document.getElementById('chat-input');
+            if (input.value) {
+                socket.emit('chat message', input.value);
+                input.value = ''; 
+            }
+        }
+
+        socket.on('chat message', function(msg) {
+            const item = document.createElement('li');
+            item.textContent = msg;
+            document.getElementById('messages').appendChild(item);
+            const msgBox = document.getElementById('messages');
+            msgBox.scrollTop = msgBox.scrollHeight;
+        });
+
+        function sendFile() {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    socket.emit('file upload', e.target.result); 
+                };
+                reader.readAsDataURL(file);
+                fileInput.value = ''; 
+            }
+        }
+
+        socket.on('file upload', function(data) {
+            const item = document.createElement('li');
+            const img = document.createElement('img');
+            img.src = data;
+            img.className = 'chat-img';
+            item.appendChild(img);
+            document.getElementById('messages').appendChild(item);
+            const msgBox = document.getElementById('messages');
+            msgBox.scrollTop = msgBox.scrollHeight;
+        });
+    </script>
+</body>
+</html>
+
+
